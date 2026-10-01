@@ -1,0 +1,15 @@
+# Silver screen
+# Deep, cinematic black and white with fine grain. Inspired by the black and white scenes of Oppenheimer.
+# On the camera: expose for the highlights (0 to -1/3); the wide dynamic range keeps them.
+# Matched against stills from the film: blacks deep but never crushed, open midtones, whites that never clip, fine grain.
+film = silver
+contrast = 0.2
+dynamic_range = 1
+highlights = -0.1
+shadows = -0.35
+brightness = 0.5
+fade = 0.05
+sharpness = -0.25
+clarity = 0.25
+grain = 0.15
+grain_size = 0.25

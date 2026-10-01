@@ -1,0 +1,16 @@
+# Warm portrait
+# Warm, soft colour with golden skin. Inspired by Kodak Portra 400, by way of Fuji X Weekly's recipe of the same inspiration.
+# On the camera: white balance Daylight, exposure +1/3 to +1.
+film = muted
+dynamic_range = 0.5
+highlights = -0.25
+shadows = 0.5
+saturation = 0.25
+sharpness = -0.5
+clarity = 0.5
+grain = 0.5
+grain_size = 0.25
+colour_depth = 1
+blue_depth = 0.5
+shift_red = 0.167
+shift_blue = -0.278

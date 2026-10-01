@@ -1,0 +1,9 @@
+# Gritty black and white
+# Hard black and white with coarse grain and strong local contrast.
+mono = 1
+contrast = 0.4
+shadows = -0.2
+clarity = 0.8
+grain = 0.5
+grain_size = 0.6
+vignette = 0.3

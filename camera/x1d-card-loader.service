@@ -1,0 +1,15 @@
+[Unit]
+Description=X1D Card Loader: run the setup on the memory card (X1DLOAD.TAR)
+# delete /media/data/x1d-card-loader/boot.sh and this does nothing
+ConditionPathExists=/media/data/x1d-card-loader/boot.sh
+RequiresMountsFor=/media/data
+
+[Service]
+# "simple" so the camera's own startup never waits on it; RemainAfterExit keeps what load.sh
+# starts in the background running after boot.sh ends
+Type=simple
+RemainAfterExit=yes
+ExecStart=/bin/sh /media/data/x1d-card-loader/boot.sh
+
+[Install]
+WantedBy=verylate.target

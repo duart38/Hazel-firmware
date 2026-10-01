@@ -1,0 +1,8 @@
+# Faded chrome
+# Quiet colour, deep shadows, soft highlights.
+saturation = -0.35
+contrast = 0.35
+shadows = -0.3
+highlights = -0.25
+shift_blue = 0.1
+clarity = 0.2

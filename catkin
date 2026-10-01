@@ -1,0 +1,346 @@
+#!/usr/bin/env python3
+"""Catkin: lets a Hasselblad X1D-50c run a setup from its memory card at startup.
+
+Hazel catkins open in late winter, before the leaves; Catkin runs before Hazel's look does.
+
+  catkin status              what's installed on the camera, and whether the card has a setup
+  catkin install             install the loader (asks before the one permanent change)
+  catkin install --data-only only the key and the loader script on the data partition;
+                             nothing runs at startup until the full install
+  catkin try                 run the loader now, as it would run at startup, and show its log
+  catkin remove              remove the loader completely
+  catkin pack FOLDER         seal FOLDER (it must have a load.sh) into build/CATKIN.TAR and .SIG
+  catkin card --to /Volumes/CARD   copy the sealed pair onto a card in a card reader
+  catkin card --usb [/SD0]         copy it onto the card in the camera, over USB
+
+The camera must be on and connected over USB. See README.md for what each step changes and how to undo it.
+"""
+
+from __future__ import annotations
+
+import base64
+import gzip
+import hashlib
+import os
+import secrets
+import shutil
+import struct
+import sys
+import tarfile
+import time
+from pathlib import Path
+
+HERE = Path(__file__).resolve().parent
+sys.path.insert(0, str(HERE / "usb"))
+
+
+def key_file() -> Path:
+    """~/.config/catkin/key, or the key made before the rename, where it was left."""
+    if "CATKIN_KEY" in os.environ:
+        return Path(os.environ["CATKIN_KEY"])
+    new, old = Path.home() / ".config/catkin/key", Path.home() / ".config/x1d-card-loader/key"
+    return old if old.exists() and not new.exists() else new
+
+
+KEY_FILE = key_file()
+BUILD = HERE / "build"
+TAR, SIG = "CATKIN.TAR", "CATKIN.SIG"  # the sealed pair at the top of the card
+LOG = "/tmp/catkin.log"  # camera/boot.sh writes it
+# Named before the rename, and kept: the startup unit is on the system partition and points to
+# this folder, and renaming either means rewriting the unit there.
+CAMERA_HOME = "/media/data/x1d-card-loader"
+UNIT = "x1d-card-loader.service"
+UNIT_PATH = f"/etc/systemd/system/{UNIT}"
+WANTS_PATH = f"/etc/systemd/system/verylate.target.wants/{UNIT}"
+STORAGE = "busctl --system --timeout=60 call com.hasselblad.storage / com.hasselblad.storage"
+FIRST_CARD = ("$(busctl --system get-property com.hasselblad.storage / com.hasselblad.storage volumes"
+              " | tr '\"' '\\n' | grep -xE '/SD[0-9]+' | head -n 1)")
+MAX_COMMAND = 231  # the USB shell takes one packet of at most this many bytes a command
+DECODER = "/tmp/catkin-unb64"
+
+
+# --- talking to the camera over USB -------------------------------------------------------------
+
+class Camera:
+    def __init__(self) -> None:
+        from x1d_usb_pull_file import open_camera
+
+        libusb = os.environ.get("X1D_LIBUSB")
+        if not libusb:
+            for candidate in ("/opt/homebrew/lib/libusb-1.0.dylib", "/usr/local/lib/libusb-1.0.dylib"):
+                if Path(candidate).exists():
+                    libusb = candidate
+                    break
+        self.dev = open_camera(libusb)
+        self._split_usb3_frames()
+
+    def _split_usb3_frames(self) -> None:
+        """Over USB 3 the camera pads each reply frame to 1024 bytes and may send several in one
+        transfer; the shell reader expects one frame a read."""
+        usb_read = self.dev.read
+        pending: list[bytes] = []
+
+        def read(endpoint, size, timeout=None):
+            if not pending:
+                raw = bytes(usb_read(endpoint, 65536, timeout))
+                pending.extend(raw[i:i + 1024] for i in range(0, len(raw), 1024))
+            return pending.pop(0)
+
+        self.dev.read = read
+
+    def sh(self, command: str, timeout_ms: int = 30000, check: bool = True, script: bool = True) -> str:
+        """Runs a shell command on the camera as root and returns its output. Longer commands are
+        uploaded as a script first (script=False: the upload's own commands, which must fit)."""
+        from x1d_usb_shell import stream_hbl_shell
+
+        if len(command.encode()) > MAX_COMMAND:
+            if not script:
+                raise SystemExit(f"internal: command over {MAX_COMMAND} bytes: {command[:80]}")
+            self.push(command.encode() + b"\n", "/tmp/x1dcl.sh")
+            command = "sh /tmp/x1dcl.sh"
+        result, output = stream_hbl_shell(self.dev, command, timeout_ms, notify_delay=0)
+        text = output.decode("utf-8", "replace")
+        if check and result != 0:
+            raise SystemExit(f"camera command failed ({result}): {command[:80]}\n{text}")
+        return text
+
+    def _send_slow(self, packed: bytes, staging: str) -> None:
+        """One command per chunk, bytes as printf octal escapes: slow (about 50 bytes a second) but
+        needs nothing on the camera."""
+        literal = set(b"abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789,._-+=:/@")
+        self.sh(f"rm -f {staging}", script=False)
+        prefix, suffix = "printf '", f"'>>{staging}"
+        budget = MAX_COMMAND - len(prefix) - len(suffix)
+        sent = 0
+        while sent < len(packed):
+            text, take = "", 0
+            while sent + take < len(packed):
+                b = packed[sent + take]
+                piece = chr(b) if b in literal else f"\\{b:03o}"
+                if len(text) + len(piece) > budget:
+                    break
+                text += piece
+                take += 1
+            self.sh(prefix + text + suffix, script=False)
+            sent += take
+
+    def _read_until(self, marker: bytes, timeout_s: float) -> bytes:
+        import usb.core
+        from x1d_usb_pull_file import read_sutest_payload
+        from x1d_usb_shell import CMD_HBL_SHELL
+
+        output = b""
+        deadline = time.monotonic() + timeout_s
+        while marker not in output and time.monotonic() < deadline:
+            try:
+                payload = read_sutest_payload(self.dev, timeout_ms=200)
+            except usb.core.USBTimeoutError:
+                continue
+            if struct.unpack_from("<I", payload, 0)[0] == CMD_HBL_SHELL:
+                output += bytes(payload[0x14:]).split(b"\0", 1)[0]
+        return output
+
+    def _send_fast(self, packed: bytes, staging: str, gap_s: float) -> None:
+        """Streams base64 into camera/unb64 (about 10 KB a second). Packets sent back to back get
+        dropped, hence the gap; the caller compares checksums and retries slower."""
+        from x1d_usb_pull_file import EP_OUT, drain
+        from x1d_usb_shell import make_hbl_shell_request, make_hbl_shell_request_bytes
+
+        text = base64.b64encode(packed) + b"."
+        drain(self.dev)
+        self.dev.write(EP_OUT, make_hbl_shell_request(f"exec {DECODER} {staging}\n", 0), timeout=1000)
+        if b"READY" not in self._read_until(b"READY", 10):
+            raise RuntimeError("the decoder on the camera didn't start")
+        for i in range(0, len(text), MAX_COMMAND):
+            self.dev.write(EP_OUT, make_hbl_shell_request_bytes(text[i:i + MAX_COMMAND], 0, request=1), timeout=1000)
+            time.sleep(gap_s)
+        reply = self._read_until(b"OK", 30)
+        drain(self.dev)
+        if b"OK" not in reply:
+            raise RuntimeError(f"the decoder on the camera didn't finish: {reply!r}")
+
+    def push(self, data: bytes, remote: str, mode: str = "644") -> None:
+        """Uploads bytes to a file on the camera, gzipped, and checks it arrived intact. Writes
+        next to the target and renames it into place."""
+        packed = gzip.compress(data, 9)
+        staging = remote + ".upload.gz"
+        self.sh(f"mkdir -p {remote.rsplit('/', 1)[0]}", script=False)
+        fast = len(packed) > 2000 and self._ensure_decoder()
+        sent = False
+        if fast:
+            for gap in (0.01, 0.03, 0.1):
+                self._send_fast(packed, staging, gap)
+                if self.sh(f"md5sum {staging}", script=False).split()[0] == hashlib.md5(packed).hexdigest():
+                    sent = True
+                    break
+        if not sent:
+            self._send_slow(packed, staging)
+        # kept apart so each stays under the command limit: a longer one would itself be uploaded
+        self.sh(f"gunzip -c {staging} >{remote}.new", script=False)
+        self.sh(f"rm -f {staging}; chmod {mode} {remote}.new", script=False)
+        self.sh(f"mv -f {remote}.new {remote}", script=False)
+        if self.sh(f"md5sum {remote}", script=False).split()[0] != hashlib.md5(data).hexdigest():
+            raise SystemExit(f"{remote} arrived damaged")
+
+    def _ensure_decoder(self) -> bool:
+        if "yes" in self.sh(f"test -x {DECODER} && echo yes || echo no", script=False):
+            return True
+        decoder = (HERE / "camera/unb64").read_bytes()
+        print("  putting the upload helper on the camera first (about 30 s, once per restart)", flush=True)
+        self._send_slow(gzip.compress(decoder, 9), DECODER + ".gz")
+        self.sh(f"gunzip -c {DECODER}.gz >{DECODER} && rm -f {DECODER}.gz && chmod 755 {DECODER}", script=False)
+        return self.sh(f"md5sum {DECODER}", script=False).split()[0] == hashlib.md5(decoder).hexdigest()
+
+
+# --- the key and the seal ----------------------------------------------------------------------
+
+def key() -> str:
+    if not KEY_FILE.exists():
+        KEY_FILE.parent.mkdir(parents=True, exist_ok=True)
+        KEY_FILE.write_text(secrets.token_hex(32) + "\n")
+        KEY_FILE.chmod(0o600)
+        print(f"made a new key: {KEY_FILE} (keep it; every card setup is sealed with it)")
+    return KEY_FILE.read_text().strip()
+
+
+def seal(archive: bytes) -> str:
+    """What camera/boot.sh computes: SHA-256 of key, archive SHA-256, key, a line each."""
+    k = key()
+    return hashlib.sha256(f"{k}\n{hashlib.sha256(archive).hexdigest()}\n{k}\n".encode()).hexdigest()
+
+
+def pack(folder: Path) -> tuple[Path, Path]:
+    if not (folder / "load.sh").is_file():
+        raise SystemExit(f"{folder} has no load.sh: that's what the loader runs")
+    BUILD.mkdir(exist_ok=True)
+    archive, signature = BUILD / TAR, BUILD / SIG
+    with tarfile.open(archive, "w", format=tarfile.USTAR_FORMAT) as tar:
+        for path in sorted(folder.rglob("*")):
+            name = path.relative_to(folder).as_posix()
+            info = tar.gettarinfo(str(path), arcname=name)
+            info.uid = info.gid = 0
+            info.uname = info.gname = "root"
+            if path.is_file():
+                with path.open("rb") as f:
+                    tar.addfile(info, f)
+            else:
+                tar.addfile(info)
+    signature.write_text(seal(archive.read_bytes()) + "\n")
+    print(f"{archive} ({archive.stat().st_size} bytes) and {signature.name}, sealed with {KEY_FILE}")
+    return archive, signature
+
+
+# --- commands ----------------------------------------------------------------------------------
+
+def status(cam: Camera) -> None:
+    print(cam.sh(
+        f'k={CAMERA_HOME}/key; b={CAMERA_HOME}/boot.sh; '
+        'echo "key on the camera:      $([ -s $k ] && echo yes || echo no)"; '
+        'echo "loader script:          $([ -f $b ] && echo yes || echo no)"; '
+        f'echo "runs at startup:        $([ -e {WANTS_PATH} ] && echo yes || echo no)"; '
+        f'echo "last startup log:"; tail -n 5 {LOG} 2>/dev/null || echo "  (none since power-on)"',
+        check=False).rstrip())
+    if KEY_FILE.exists():
+        matches = cam.sh(f"cat {CAMERA_HOME}/key 2>/dev/null", check=False).strip() == key()
+        print(f"key on this Mac:        {KEY_FILE} ({'the same' if matches else 'DIFFERENT from the camera'})")
+    else:
+        print(f"key on this Mac:        none yet ({KEY_FILE})")
+
+
+def install_data(cam: Camera) -> None:
+    cam.push((key() + "\n").encode(), f"{CAMERA_HOME}/key", mode="600")
+    cam.push((HERE / "camera/boot.sh").read_bytes(), f"{CAMERA_HOME}/boot.sh", mode="755")
+    print(f"key and loader script are in {CAMERA_HOME} (the camera's data partition)")
+
+
+PERMANENT_CHANGE = f"""
+The one permanent change: two small files on the camera's system partition, which is read-only
+and normally only changed by a firmware update.
+
+  {UNIT_PATH}                        (camera/{UNIT}, 15 lines)
+  {WANTS_PATH}  (a link to it)
+
+Together they make the camera run {CAMERA_HOME}/boot.sh once, about 10 seconds after power-on.
+The camera's own startup doesn't wait for it. To write them, the system partition is switched to
+writable for a moment and back to read-only.
+
+Undo, any of these:
+  - catkin remove                       (removes both files and {CAMERA_HOME})
+  - delete {CAMERA_HOME}/boot.sh        (the service stays but does nothing)
+  - take the card out                   (no sealed {TAR}, nothing runs)
+A firmware update replaces the system partition and removes the two files too.
+"""
+
+
+def install_unit(cam: Camera) -> None:
+    print(PERMANENT_CHANGE)
+    if input('Type "install" to make this change: ').strip() != "install":
+        raise SystemExit("not installed; nothing on the system partition changed")
+    cam.push((HERE / "camera" / UNIT).read_bytes(), f"/tmp/{UNIT}")
+    print(cam.sh(
+        f"mount -o remount,rw / && cp /tmp/{UNIT} {UNIT_PATH} && ln -sf ../{UNIT} {WANTS_PATH} && sync; "
+        f"mount -o remount,ro /; ls -l {UNIT_PATH} {WANTS_PATH}; grep ' / ' /proc/mounts").rstrip())
+    print("installed: the next power-on runs the card's setup")
+
+
+def remove(cam: Camera) -> None:
+    print(cam.sh(
+        f"if [ -e {UNIT_PATH} ] || [ -L {WANTS_PATH} ]; then mount -o remount,rw / && rm -f {WANTS_PATH} {UNIT_PATH} && sync; "
+        f"mount -o remount,ro /; fi; rm -rf {CAMERA_HOME}; "
+        f"ls {UNIT_PATH} {WANTS_PATH} {CAMERA_HOME} 2>&1; grep ' / ' /proc/mounts", check=False).rstrip())
+    print("removed: the camera no longer looks at the card at startup")
+
+
+def card_usb(cam: Camera, card: str | None) -> None:
+    archive, signature = BUILD / TAR, BUILD / SIG
+    if not archive.exists():
+        raise SystemExit("nothing packed yet: run  catkin pack FOLDER  first")
+    lines = []
+    for path in (archive, signature):
+        cam.push(path.read_bytes(), f"/tmp/{path.name}")
+        size = path.stat().st_size
+        # the storage service never shortens a file it overwrites: remove the old one first.
+        # Reading a card needs live view off.
+        lines.append(cam.sh(
+            f'c={card or FIRST_CARD}; busctl --system call com.hasselblad.video / com.hasselblad.video setLiveviewState bbs false false ""; sleep 2; '
+            f'{STORAGE} Remove s $c/{path.name} >/dev/null 2>&1; '
+            f'{STORAGE} WriteFile sis /tmp/{path.name} {size} $c/{path.name} >/dev/null && '
+            f'{STORAGE} File stis $c/{path.name} 0 {size} /tmp/back >/dev/null; echo $c; sha256sum /tmp/back; rm -f /tmp/back /tmp/{path.name}',
+            timeout_ms=120000))
+        if hashlib.sha256(path.read_bytes()).hexdigest() not in lines[-1]:
+            raise SystemExit(f"the copy of {path.name} on the card doesn't match")
+    print(f"{TAR} and {SIG} are on {lines[0].split()[0]}, read back identical")
+
+
+def main(argv: list[str]) -> None:
+    if not argv or argv[0] in ("-h", "--help"):
+        print(__doc__)
+        return
+    verb, rest = argv[0], argv[1:]
+    if verb == "pack":
+        pack(Path(rest[0]))
+    elif verb == "card" and rest[:1] == ["--to"]:
+        for name in (TAR, SIG):
+            shutil.copyfile(BUILD / name, Path(rest[1]) / name)
+        print(f"{TAR} and {SIG} copied to {rest[1]}; eject the card before taking it out")
+    elif verb == "card" and rest[:1] == ["--usb"]:
+        card_usb(Camera(), rest[1] if len(rest) > 1 else None)
+    elif verb == "status":
+        status(Camera())
+    elif verb == "install":
+        cam = Camera()
+        install_data(cam)
+        if "--data-only" not in rest:
+            install_unit(cam)
+    elif verb == "try":
+        cam = Camera()
+        print(cam.sh(f"rm -f {LOG}; sh {CAMERA_HOME}/boot.sh; cat {LOG}",
+                     timeout_ms=180000).rstrip())
+    elif verb == "remove":
+        remove(Camera())
+    else:
+        raise SystemExit(f"unknown command {verb!r}; see catkin --help")
+
+
+if __name__ == "__main__":
+    main(sys.argv[1:])

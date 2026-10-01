@@ -1,0 +1,8 @@
+# Red filter black and white
+# Dark skies and light skin, as with a red filter on the lens.
+mono = 1
+mono_mix = 0.70, 0.28, 0.02
+contrast = 0.3
+highlights = -0.2
+grain = 0.25
+grain_size = 0.2
