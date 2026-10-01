@@ -20,6 +20,9 @@ always did.
 - `hazel/`: **the film look**, ready-built: the setup Catkin loads from the card, with seven
   recipes in its slots.
 
+The recipes themselves, and more of them, are in
+[Hazel-film-recipes](https://github.com/duart38/Hazel-film-recipes).
+
 ## What it changes on the camera
 
 | Where | What | Stays after a restart? |
