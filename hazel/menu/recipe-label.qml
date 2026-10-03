@@ -9,25 +9,25 @@
 // too) and the info screen. Nothing of the camera's is changed. The name is the active slot's, from
 // /tmp/x1d/slots/names; with the film look off, or "Recipe name" off on the Extras page, there is
 // no label.
-import QtQuick 2.0
+import QtQuick 2.4
 import com.hasselblad.video 1.0
 import com.hasselblad.bodysync 1.0
 import "qrc:///common"
+// the popup and its base live across the info screen's folders: import the ones it does
+import "qrc:/components/popups"
+import "qrc:/components/controls"
+import "qrc:/controlscreen"
 
 Item {
     id: hazel
-    readonly property int maxChars: 16
     property string recipeName: ""
+    // the recipes on the card, [{slot: "C1", name: "Gritty black and white"}, ...], and the active slot
+    property var recipes: []
+    property string activeSlot: ""
     // the temperature readout (filmhook.c) sits top centre, where a long name would run into it
     property bool readoutShown: true
 
     GlobalConstants { id: constants }
-
-    // longer names keep their first maxChars - 3 characters, then "..."
-    function capped(name) {
-        if (name.length <= maxChars) return name;
-        return name.substring(0, maxChars - 3).replace(/\s+$/, "") + "...";
-    }
 
     function read(path, apply) {
         var request = new XMLHttpRequest();
@@ -48,16 +48,31 @@ Item {
                 read("/tmp/x1d/active", function (active) {
                     var slot = active.trim();
                     read("/tmp/x1d/slots/names", function (names) {
-                        var name = "";
+                        var name = "", list = [];
                         names.split("\n").forEach(function (line) {
                             var tab = line.indexOf("\t");
-                            if (tab > 0 && line.substring(0, tab) === slot) name = line.substring(tab + 1).trim();
+                            if (tab <= 0) return;
+                            var entry = {slot: line.substring(0, tab), name: line.substring(tab + 1).trim()};
+                            if (!/^C[1-7]$/.test(entry.slot)) return;
+                            list.push(entry);
+                            if (entry.slot === slot) name = entry.name;
                         });
-                        recipeName = capped(name);
+                        recipes = list;
+                        activeSlot = slot;
+                        recipeName = name;
                     });
                 });
             });
         });
+    }
+
+    // the way the Hazel page picks a recipe: slots.sh makes the slot in /tmp/x1d/active the live one
+    function pick(slot) {
+        var request = new XMLHttpRequest();
+        request.open("PUT", "file:///tmp/x1d/active");
+        request.send(slot + "\n");
+        console.log("recipe-label.qml: picked slot " + slot);
+        refresh();
     }
 
     property var attached: ({})
@@ -122,6 +137,40 @@ Item {
             // goes under the ISO readout instead
             readonly property var topLeftTaken: ["SpiritLevel"]
             readonly property bool underIso: topLeftTaken.indexOf(view) >= 0 || (hazel !== null && hazel.readoutShown)
+
+            // A name wider than its space loses whole words from the end, then gets "..."; a single
+            // word that is still too wide is cut inside. Measured, so each place shows what fits.
+            function fit(name, metrics, maxWidth) {
+                metrics.text = name;
+                if (metrics.width <= maxWidth) return name;
+                var words = name.split(" ");
+                while (words.length > 1) {
+                    words.pop();
+                    var shorter = words.join(" ").replace(/[\s,;:-]+$/, "") + "...";
+                    metrics.text = shorter;
+                    if (metrics.width <= maxWidth) return shorter;
+                }
+                for (var n = name.length - 1; n > 0; n--) {
+                    metrics.text = name.substring(0, n) + "...";
+                    if (metrics.width <= maxWidth) return metrics.text;
+                }
+                return "";
+            }
+            // Live view: up to the temperature readout (top centre) or, without it, to the ISO
+            // readout; under ISO, half the width. Info screen: the empty strip above EV, to about
+            // the middle (it is 640 wide and laid out in fixed pixels).
+            readonly property real liveViewSpace: underIso ? width * 0.5
+                                                : width * 0.68 - liveViewText.margin
+            readonly property real infoScreenSpace: 318
+            property string liveViewName: ""
+            property string infoScreenName: ""
+            TextMetrics { id: liveViewMetrics; font: liveViewText.font }
+            TextMetrics { id: infoScreenMetrics; font: infoScreenText.font }
+            function refit() {
+                var name = hazel ? hazel.recipeName : "";
+                liveViewName = fit(name, liveViewMetrics, liveViewSpace);
+                infoScreenName = fit(name, infoScreenMetrics, infoScreenSpace);
+            }
             Timer {
                 interval: 300; repeat: true; running: true
                 onTriggered: {
@@ -131,6 +180,8 @@ Item {
                     holder.showOnInfoScreen = atMain && holder.infoScreen !== null && holder.infoScreen.visible
                                           && VideoControl.videoMode === VideoControl.Off;
                     holder.view = holder.views[configstore.LiveViewOverlayIndex] || "";
+                    holder.refit();
+                    holder.emptyPickerSlot();
                 }
             }
 
@@ -143,7 +194,7 @@ Item {
                 readonly property real isoLine: holder.sizeFactor * (constants.liveViewBorderNormalMargin + 25 + 8)
                 x: holder.underIso ? holder.width - width - margin : margin
                 y: holder.underIso ? isoLine + height * 0.6 : isoLine - height / 2
-                text: holder.hazel ? holder.hazel.recipeName : ""
+                text: holder.liveViewName
                 font.family: constants.cameraControlTextFontName
                 font.pixelSize: constants.evfTextSize * holder.sizeFactor * (holder.underIso ? 0.8 : 1)
                 color: constants.cameraViewNormalTextColor
@@ -151,16 +202,80 @@ Item {
                 styleColor: "black"
             }
 
+            // Tapping the name on the info screen opens the camera's own list popup (the one ISO and
+            // shutter speed use) in the info screen's popup slot, so it scrolls with the dial and
+            // closes like theirs. The slot is the camera's: once ours closes it is emptied again, or
+            // leaving the next stock popup would restore ours.
+            function findNamed(item, name) {
+                if (!item) return null;
+                if (item.objectName === name) return item;
+                for (var i = 0; i < item.children.length; i++) {
+                    var found = findNamed(item.children[i], name);
+                    if (found) return found;
+                }
+                return null;
+            }
+            readonly property var pickerNames: hazel ? hazel.recipes.map(function (r) { return r.name || r.slot }) : []
+            property Item pickerSlot: null
+            function openPicker() {
+                var slot = findNamed(infoScreen, "ControlScreen_popupLoader");
+                var screenStates = findNamed(infoScreen, "ControlScreen_states");
+                if (!slot || !screenStates || slot.status !== Loader.Null || pickerNames.length === 0) return;
+                pickerSlot = slot;
+                slot.sourceComponent = recipePicker;
+                slot.active = true;
+                screenStates.state = "popup";
+                var list = findNamed(slot.item, "popup_listSelector");
+                if (list) list.itemFontSizeBase = 20;
+            }
+            function emptyPickerSlot() {
+                if (!pickerSlot || (pickerSlot.item && pickerSlot.item.visible)) return;
+                pickerSlot.active = false;
+                pickerSlot.sourceComponent = null;
+                pickerSlot = null;
+            }
+            Component {
+                id: recipePicker
+                PopupListSelector {
+                    objectName: "hazelRecipePicker"
+                    popupAnchor.leftMargin: 40
+                    popupAnchor.rightMargin: 40
+                    isToLeft: false
+                    model: holder.pickerNames
+                    currentlySelectedValue: {
+                        for (var i = 0; i < holder.hazel.recipes.length; i++)
+                            if (holder.hazel.recipes[i].slot === holder.hazel.activeSlot) return holder.pickerNames[i];
+                        return "";
+                    }
+                    onSelectedValueChanged: {
+                        var i = holder.pickerNames.indexOf(value);
+                        if (i >= 0) holder.hazel.pick(holder.hazel.recipes[i].slot);
+                    }
+                }
+            }
+
             // info screen: left-aligned with the EV readout, in the empty strip just above it (the
             // screen is 640 x 480 and laid out in fixed pixels, so these are too)
             Text {
+                id: infoScreenText
                 visible: holder.showOnInfoScreen && text !== ""
                 x: 14
                 y: 293 - height / 2
-                text: holder.hazel ? holder.hazel.recipeName : ""
+                text: holder.infoScreenName
                 font.family: constants.cameraControlTextFontName
                 font.pixelSize: 24
-                color: constants.itemColor
+                color: tap.pressed ? constants.highlightItemColor : constants.itemColor
+
+                // the whole strip above EV, from the screen's edge to just past the name
+                MouseArea {
+                    id: tap
+                    enabled: parent.visible
+                    x: -parent.x
+                    y: -(parent.y - 272)
+                    width: parent.x + parent.width + 20
+                    height: 312 - 272
+                    onClicked: holder.openPicker()
+                }
             }
         }
     }
