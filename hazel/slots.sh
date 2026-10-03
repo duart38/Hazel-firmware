@@ -28,9 +28,12 @@ names() {
   mv $DIR/slots/names.new $DIR/slots/names
 }
 
-# recipes are text: no NUL bytes and no control characters other than tab, line feed, carriage return
-is_text() {
-  tr -d '\000' <"$1" | cmp -s - "$1" && ! grep -q "$(printf '[\001-\010\016-\037\177]')" "$1"
+# recipes are text: no NUL bytes, no control characters other than tab, line feed, carriage
+# return, and every line blank, a "#" comment or "key = value". A read that fails can hand back
+# other bytes entirely (seen while live view was starting: high bytes the control check let by)
+is_recipe() {
+  tr -d '\000' <"$1" | cmp -s - "$1" && ! grep -q "$(printf '[\001-\010\016-\037\177]')" "$1" &&
+    ! tr -d '\r' <"$1" | grep -qvE '^[[:space:]]*$|^[[:space:]]*#|^[[:space:]]*[a-z_]+[[:space:]]*='
 }
 
 refresh() {
@@ -44,9 +47,8 @@ refresh() {
       size=$(echo "$list" | tr '"' '\n' | grep -A4 -xF "C$n.txt" | sed -n 's/^ t \([0-9]*\) $/\1/p' | head -n 1)
       # the hook reads up to 2 KB of recipe
       [ -n "$size" ] && [ "$size" -gt 0 ] && [ "$size" -le 2048 ] || continue
-      busctl --timeout=15 call $S File stis "$dir/C$n.txt" 0 "$size" "$new/C$n.txt" >/dev/null && is_text "$new/C$n.txt" && continue
-      # a read that fails or hands back binary (seen once, while live view was starting) keeps the
-      # slot's last good copy
+      busctl --timeout=15 call $S File stis "$dir/C$n.txt" 0 "$size" "$new/C$n.txt" >/dev/null && is_recipe "$new/C$n.txt" && continue
+      # a read that fails or hands back something else keeps the slot's last good copy
       rm -f "$new/C$n.txt"
       [ -f "$DIR/slots/C$n.txt" ] && cp "$DIR/slots/C$n.txt" "$new/C$n.txt" && say "slot C$n: bad read, kept the last copy"
     done
