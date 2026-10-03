@@ -11,6 +11,7 @@
 #    restarts both services
 #  - debug logging (off unless switched on last time, or the card has a HAZEL-DEBUG file)
 #  - the sidecar writer, the temperature reader, the slot keeper and debug.sh in the background
+#  - wifi with key-only SSH, when a network was set up (wifi.sh)
 # Log: /tmp/catkin.log (the loader sends it there).
 say() { echo "$(date +%T) $*"; }
 from=$1
@@ -68,4 +69,10 @@ $X temps
 for pid in $(ps | grep -E "[s]lots.sh watch|[d]ebug.sh watch" | awk '{print $1}'); do kill $pid; done
 (sh /tmp/x1d/slots.sh watch >>/tmp/x1d/slots.log 2>&1 &)
 (sh /tmp/x1d/debug.sh watch >>/tmp/x1d/debug.out 2>&1 &)
+# wifi for development (key-only SSH on port 2222), when a network has been set up with cam wifi setup;
+# in the background, joining takes up to a minute
+if [ -f $KEEP/wifi/home.conf ]; then
+  (sh /tmp/x1d/wifi.sh up >>/tmp/x1d/wifi.log 2>&1 &)
+  say "wifi starting"
+fi
 say "load.sh done"
