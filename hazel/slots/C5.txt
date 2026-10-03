@@ -1,23 +1,23 @@
 # Gold 200
 # Warm, golden consumer-film colour: honey highlights, golden skin and leaves, cyan-blue skies, fine grain. Inspired by Kodak Gold 200, by way of Fuji X Weekly's recipe of the same inspiration.
 # On the camera: white balance Daylight, exposure 0 to +2/3 (more for the airy, scanned look).
-# Matched against scans of the real film; under lamplight it turns amber, as daylight film does.
-dynamic_range = 1
+# Matched against 120 and 35mm scans of the real film: deep blacks, punchy reds; under lamplight it turns amber, as daylight film does.
+dynamic_range = 0.5
 highlights = -0.25
-shadows = -0.25
-brightness = 0.45
-fade = 0.04
+shadows = -0.5
+brightness = 0.55
+contrast = 0.15
 saturation = 0.1
 shift_red = 0.4
 shift_blue = 0.1
 colour_depth = 0.5
-grade_shadows = 15, 0.25
-grade_highlights = 45, 0.35
-mix_red = 0, -0.1, 0
+grade_shadows = 10, 0.3
+grade_highlights = 30, 0.35
+mix_red = 0, 0.05, 0
 mix_orange = 0.1, 0.1, 0
 mix_yellow = 0, 0.2, 0
 mix_green = 0, -0.5, 0
-mix_blue = -0.4, 0.45, 0
+mix_blue = -0.15, 0.45, 0
 sharpness = -0.5
-grain = 0.35
+grain = 0.42
 grain_size = 0.25
