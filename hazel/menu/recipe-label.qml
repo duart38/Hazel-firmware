@@ -181,7 +181,7 @@ Item {
                                           && VideoControl.videoMode === VideoControl.Off;
                     holder.view = holder.views[configstore.LiveViewOverlayIndex] || "";
                     holder.refit();
-                    holder.emptyPickerSlot();
+                    holder.closedPicker();
                 }
             }
 
@@ -200,12 +200,24 @@ Item {
                 color: constants.cameraViewNormalTextColor
                 style: Text.Outline
                 styleColor: "black"
+
+                // the name and a margin around it, like the camera's tappable readouts
+                MouseArea {
+                    enabled: parent.visible
+                    anchors.fill: parent
+                    anchors.margins: -20 * holder.sizeFactor
+                    preventStealing: true
+                    onClicked: holder.openPicker(true)
+                }
             }
 
-            // Tapping the name on the info screen opens the camera's own list popup (the one ISO and
-            // shutter speed use) in the info screen's popup slot, so it scrolls with the dial and
-            // closes like theirs. The slot is the camera's: once ours closes it is emptied again, or
-            // leaving the next stock popup would restore ours.
+            // Tapping the name opens the camera's own list popup (the one ISO and shutter speed use),
+            // so it scrolls with the dial and closes like theirs. On the info screen it goes in the
+            // screen's popup slot; the slot is the camera's, so once ours closes it is emptied
+            // again, or leaving the next stock popup would restore ours. The X1D's live view has no
+            // popup slot (its readouts can't be tapped), so there the popup is made on this
+            // label's own layer, which outlives live view, removed once it closes, and closed if
+            // live view ends under it.
             function findNamed(item, name) {
                 if (!item) return null;
                 if (item.objectName === name) return item;
@@ -217,22 +229,42 @@ Item {
             }
             readonly property var pickerNames: hazel ? hazel.recipes.map(function (r) { return r.name || r.slot }) : []
             property Item pickerSlot: null
-            function openPicker() {
+            property Item livePicker: null
+            function fitPickerText(picker) {
+                var list = findNamed(picker, "popup_listSelector");
+                if (list) list.itemFontSizeBase = 20;
+            }
+            function openPicker(onLiveView) {
+                if (pickerNames.length === 0 || pickerSlot || livePicker) return;
+                if (onLiveView) {
+                    livePicker = recipePicker.createObject(holder, {width: holder.width, height: holder.height});
+                    if (!livePicker) return;
+                    fitPickerText(livePicker);
+                    livePicker.forceActiveFocus();
+                    return;
+                }
                 var slot = findNamed(infoScreen, "ControlScreen_popupLoader");
                 var screenStates = findNamed(infoScreen, "ControlScreen_states");
-                if (!slot || !screenStates || slot.status !== Loader.Null || pickerNames.length === 0) return;
+                if (!slot || !screenStates || slot.active) return;
                 pickerSlot = slot;
                 slot.sourceComponent = recipePicker;
                 slot.active = true;
                 screenStates.state = "popup";
-                var list = findNamed(slot.item, "popup_listSelector");
-                if (list) list.itemFontSizeBase = 20;
+                fitPickerText(slot.item);
             }
-            function emptyPickerSlot() {
-                if (!pickerSlot || (pickerSlot.item && pickerSlot.item.visible)) return;
-                pickerSlot.active = false;
-                pickerSlot.sourceComponent = null;
-                pickerSlot = null;
+            function closedPicker() {
+                if (livePicker && livePicker.visible && VideoControl.videoMode !== VideoControl.View)
+                    livePicker.close();
+                if (livePicker && !livePicker.visible) {
+                    livePicker.destroy();
+                    livePicker = null;
+                    if (liveView) liveView.forceActiveFocus();
+                }
+                if (pickerSlot && !(pickerSlot.item && pickerSlot.item.visible)) {
+                    pickerSlot.active = false;
+                    pickerSlot.sourceComponent = null;
+                    pickerSlot = null;
+                }
             }
             Component {
                 id: recipePicker
@@ -274,7 +306,7 @@ Item {
                     y: -(parent.y - 272)
                     width: parent.x + parent.width + 20
                     height: 312 - 272
-                    onClicked: holder.openPicker()
+                    onClicked: holder.openPicker(false)
                 }
             }
         }
