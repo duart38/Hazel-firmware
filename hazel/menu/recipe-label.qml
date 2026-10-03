@@ -245,7 +245,8 @@ Item {
                 }
                 var slot = findNamed(infoScreen, "ControlScreen_popupLoader");
                 var screenStates = findNamed(infoScreen, "ControlScreen_states");
-                if (!slot || !screenStates || slot.active) return;
+                // the camera leaves this slot active while empty: busy means something is loaded
+                if (!slot || !screenStates || slot.status !== Loader.Null) return;
                 pickerSlot = slot;
                 slot.sourceComponent = recipePicker;
                 slot.active = true;
@@ -256,9 +257,10 @@ Item {
                 if (livePicker && livePicker.visible && VideoControl.videoMode !== VideoControl.View)
                     livePicker.close();
                 if (livePicker && !livePicker.visible) {
+                    // focus first: removing the item that has it leaves the window with none
+                    if (liveView) liveView.forceActiveFocus();
                     livePicker.destroy();
                     livePicker = null;
-                    if (liveView) liveView.forceActiveFocus();
                 }
                 if (pickerSlot && !(pickerSlot.item && pickerSlot.item.visible)) {
                     pickerSlot.active = false;
