@@ -215,6 +215,10 @@ Item {
             readonly property real liveViewSpace: underIso ? width * 0.5
                                                 : width * 0.68 - liveViewText.margin
             readonly property real infoScreenSpace: 318
+            // where the name moves to, past whatever of the camera's would be under it (keepClear)
+            property real liveViewDrop: 0
+            property real infoScreenX: 14
+            property real playbackLift: 0
             readonly property real playbackSpace: 320
             property string liveViewName: ""
             property string infoScreenName: ""
@@ -225,7 +229,7 @@ Item {
             function refit() {
                 var name = hazel ? hazel.recipeName : "";
                 liveViewName = fit(name, liveViewMetrics, liveViewSpace);
-                infoScreenName = fit(name, infoScreenMetrics, infoScreenSpace);
+                infoScreenName = fit(name, infoScreenMetrics, infoScreenSpace + 14 - infoScreenX);
                 playbackName = fit(photoRecipe, playbackMetrics, playbackSpace);
             }
 
@@ -275,6 +279,92 @@ Item {
                 showOnPlayback = photo !== null && bottomBar !== null && overlay.visible && overlay.opacity > 0
                               && bottomBar.visible && bottomBar.opacity > 0;
             }
+            // The camera shows badges and readouts that come and go (MF, AE-L, and more in other
+            // modes and views), so the name doesn't rely on known positions: it looks at what the
+            // camera draws in the same window and moves past anything it would cover. Anything
+            // visible with something to show counts (text, an icon, a filled or outlined shape),
+            // except lines and backgrounds, by the area it paints, in this layer's coordinates.
+            function paintedArea(item) {
+                var w = item.width, h = item.height, x = 0, y = 0;
+                if (typeof item.text === "string" && item.contentWidth !== undefined) {
+                    if (item.text === "") return null;
+                    var cw = item.contentWidth, ch = item.contentHeight;
+                    if (item.horizontalAlignment === Text.AlignRight) x = w - cw;
+                    else if (item.horizontalAlignment === Text.AlignHCenter) x = (w - cw) / 2;
+                    if (item.verticalAlignment === Text.AlignBottom) y = h - ch;
+                    else if (item.verticalAlignment === Text.AlignVCenter) y = (h - ch) / 2;
+                    w = cw; h = ch;
+                } else if (item.fillMode !== undefined && item.source !== undefined) {
+                    if (String(item.source) === "" || item.status !== Image.Ready) return null;
+                } else if (item.border !== undefined && item.radius !== undefined && item.color !== undefined) {
+                    if (item.color.a < 0.05 && item.border.width <= 0) return null;
+                } else {
+                    return null;
+                }
+                if (w < 4 || h < 4 || (w > holder.width * 0.6 && h > holder.height * 0.3)) return null;
+                var at = item.mapToItem(holder, x, y);
+                return {x: at.x, y: at.y, w: w, h: h};
+            }
+            function drawnIn(area) {
+                var found = [];
+                function walk(item, opacity) {
+                    if (!item || !item.visible || item === holder) return;
+                    opacity *= item.opacity;
+                    if (opacity < 0.05) return;
+                    var painted = paintedArea(item);
+                    if (painted) found.push(painted);
+                    for (var i = 0; i < item.children.length; i++) walk(item.children[i], opacity);
+                }
+                walk(area, 1);
+                return found;
+            }
+            // Text boxes are taller than their letters, so lines of text next to each other overlap
+            // a little; only a real overlap counts.
+            function covers(a, b) {
+                var across = Math.min(a.x + a.w, b.x + b.w) - Math.max(a.x, b.x);
+                var down = Math.min(a.y + a.h, b.y + b.h) - Math.max(a.y, b.y);
+                return across > 6 && down > 0.3 * Math.min(a.h, b.h);
+            }
+            // moves `rect` down, right or up (step 1, 2 or 3) until it covers none of `drawn`
+            function keepClear(rect, drawn, direction) {
+                for (var tries = 0; tries < 8; tries++) {
+                    var hit = null;
+                    for (var i = 0; i < drawn.length && !hit; i++) if (covers(rect, drawn[i])) hit = drawn[i];
+                    if (!hit) break;
+                    if (direction === 1) rect.y = hit.y + hit.h + 4;
+                    else if (direction === 2) rect.x = hit.x + hit.w + 12;
+                    else rect.y = hit.y - rect.h - 4;
+                }
+                return rect;
+            }
+            function avoidCamera() {
+                if (showOnLiveView && liveViewText.text !== "") {
+                    var baseY = liveViewText.y - liveViewDrop;
+                    var live = keepClear({x: liveViewText.x, y: baseY, w: liveViewText.width, h: liveViewText.height},
+                                         drawnIn(liveView), 1);
+                    liveViewDrop = live.y - baseY;
+                } else {
+                    liveViewDrop = 0;
+                }
+                if (showOnInfoScreen && hazel && hazel.recipeName !== "") {
+                    // measured at full length from the start of the strip, then fitted to what is left
+                    infoScreenMetrics.text = hazel.recipeName;
+                    var info = keepClear({x: 14, y: infoScreenText.y, w: Math.min(infoScreenMetrics.width, infoScreenSpace), h: infoScreenText.height},
+                                         drawnIn(infoScreen), 2);
+                    infoScreenX = info.x;
+                } else {
+                    infoScreenX = 14;
+                }
+                if (showOnPlayback && playbackText.text !== "" && browseLoader && browseLoader.item) {
+                    var baseTop = barAt.y - playbackTab.height;
+                    var tab = keepClear({x: playbackTab.x, y: baseTop, w: playbackTab.width, h: playbackTab.height},
+                                        drawnIn(browseLoader.item), 3);
+                    playbackLift = baseTop - tab.y;
+                } else {
+                    playbackLift = 0;
+                }
+            }
+
             Timer {
                 interval: 300; repeat: true; running: true
                 onTriggered: {
@@ -285,6 +375,8 @@ Item {
                                           && VideoControl.videoMode === VideoControl.Off;
                     holder.view = holder.views[configstore.LiveViewOverlayIndex] || "";
                     holder.findPlayback();
+                    holder.refit();
+                    holder.avoidCamera();
                     holder.refit();
                     holder.closedPicker();
                 }
@@ -298,7 +390,7 @@ Item {
                 readonly property real margin: holder.sizeFactor * constants.liveViewBorderNormalMargin
                 readonly property real isoLine: holder.sizeFactor * (constants.liveViewBorderNormalMargin + 25 + 8)
                 x: holder.underIso ? holder.width - width - margin : margin
-                y: holder.underIso ? isoLine + height * 0.6 : isoLine - height / 2
+                y: (holder.underIso ? isoLine + height * 0.6 : isoLine - height / 2) + holder.liveViewDrop
                 text: holder.liveViewName
                 font.family: constants.cameraControlTextFontName
                 font.pixelSize: constants.evfTextSize * holder.sizeFactor * (holder.underIso ? 0.8 : 1)
@@ -444,7 +536,7 @@ Item {
                 id: playbackTab
                 visible: holder.showOnPlayback && playbackText.text !== ""
                 x: holder.barAt.x
-                y: holder.barAt.y - height
+                y: holder.barAt.y - height - holder.playbackLift
                 width: playbackText.width + 28
                 height: 40
                 // the bar is see-through by its opacity, which would fade the name too
@@ -478,7 +570,7 @@ Item {
             Text {
                 id: infoScreenText
                 visible: holder.showOnInfoScreen && text !== ""
-                x: 14
+                x: holder.infoScreenX
                 y: 293 - height / 2
                 text: holder.infoScreenName
                 font.family: constants.cameraControlTextFontName
