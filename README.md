@@ -92,6 +92,12 @@ setup right away and prints what happened.
 On the camera: **Settings › Extras**. Switch the film look on or off, and pick one of the seven
 recipe slots.
 
+The recipe's name shows in live view and on the info screen; tap it to pick another slot there.
+In playback, a photo shows the name of the recipe it was taken with, on the left above the bottom
+bar. Tap it to see that photo with another recipe, or with the film look off. Only the photo's
+`.look` file next to it on the card changes; the raw file stays exactly as it was shot, and you can
+pick the first recipe again at any time.
+
 To use other recipes, put text files named `C1.txt` to `C7.txt` in a `HAZEL/recipes` folder on
 the card (at most 2 KB each). The camera reads them when it starts and when you open the menu.
 There are recipes to start from in
