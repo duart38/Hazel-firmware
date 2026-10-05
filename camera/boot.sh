@@ -2,7 +2,7 @@
 # Catkin: at startup, run the setup the memory card brings along.
 #
 # On the camera as /media/data/x1d-card-loader/boot.sh (the writable data partition), started once,
-# about 10 s after power-on, by x1d-card-loader.service (both keep the name they had before the
+# about 7 s after power-on, with live view, by x1d-card-loader.service (both keep the name they had before the
 # project was called Catkin: the service is on the system partition). It looks for CATKIN.TAR and
 # CATKIN.SIG at the top of a card, copies them into /tmp, and checks the seal: a SHA-256 of this
 # camera's key wrapped around the archive's own SHA-256, made by `catkin pack` on the Mac that

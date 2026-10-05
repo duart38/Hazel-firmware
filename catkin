@@ -51,7 +51,9 @@ LOG = "/tmp/catkin.log"  # camera/boot.sh writes it
 CAMERA_HOME = "/media/data/x1d-card-loader"
 UNIT = "x1d-card-loader.service"
 UNIT_PATH = f"/etc/systemd/system/{UNIT}"
-WANTS_PATH = f"/etc/systemd/system/verylate.target.wants/{UNIT}"
+WANTS_PATH = f"/etc/systemd/system/late.target.wants/{UNIT}"
+# where the link was before the loader started with live view; install and remove clear it
+OLD_WANTS_PATH = f"/etc/systemd/system/verylate.target.wants/{UNIT}"
 STORAGE = "busctl --system --timeout=60 call com.hasselblad.storage / com.hasselblad.storage"
 FIRST_CARD = ("$(busctl --system get-property com.hasselblad.storage / com.hasselblad.storage volumes"
               " | tr '\"' '\\n' | grep -xE '/SD[0-9]+' | head -n 1)")
@@ -257,12 +259,12 @@ PERMANENT_CHANGE = f"""
 The one permanent change: two small files on the camera's system partition, which is read-only
 and normally only changed by a firmware update.
 
-  {UNIT_PATH}                        (camera/{UNIT}, 15 lines)
+  {UNIT_PATH}                        (camera/{UNIT}, 19 lines)
   {WANTS_PATH}  (a link to it)
 
-Together they make the camera run {CAMERA_HOME}/boot.sh once, about 10 seconds after power-on.
-The camera's own startup doesn't wait for it. To write them, the system partition is switched to
-writable for a moment and back to read-only.
+Together they make the camera run {CAMERA_HOME}/boot.sh once, about 7 seconds after power-on,
+when live view starts. The camera's own startup doesn't wait for it. To write them, the system
+partition is switched to writable for a moment and back to read-only.
 
 Undo, any of these:
   - catkin remove                       (removes both files and {CAMERA_HOME})
@@ -278,14 +280,15 @@ def install_unit(cam: Camera) -> None:
         raise SystemExit("not installed; nothing on the system partition changed")
     cam.push((HERE / "camera" / UNIT).read_bytes(), f"/tmp/{UNIT}")
     print(cam.sh(
-        f"mount -o remount,rw / && cp /tmp/{UNIT} {UNIT_PATH} && ln -sf ../{UNIT} {WANTS_PATH} && sync; "
-        f"mount -o remount,ro /; ls -l {UNIT_PATH} {WANTS_PATH}; grep ' / ' /proc/mounts").rstrip())
+        f"mount -o remount,rw / && cp /tmp/{UNIT} {UNIT_PATH} && ln -sf ../{UNIT} {WANTS_PATH} && rm -f {OLD_WANTS_PATH} && sync; "
+        f"mount -o remount,ro /; systemctl daemon-reload; ls -l {UNIT_PATH} {WANTS_PATH}; grep ' / ' /proc/mounts").rstrip())
     print("installed: the next power-on runs the card's setup")
 
 
 def remove(cam: Camera) -> None:
     print(cam.sh(
-        f"if [ -e {UNIT_PATH} ] || [ -L {WANTS_PATH} ]; then mount -o remount,rw / && rm -f {WANTS_PATH} {UNIT_PATH} && sync; "
+        f"if [ -e {UNIT_PATH} ] || [ -L {WANTS_PATH} ] || [ -L {OLD_WANTS_PATH} ]; then mount -o remount,rw / && "
+        f"rm -f {WANTS_PATH} {OLD_WANTS_PATH} {UNIT_PATH} && sync; "
         f"mount -o remount,ro /; fi; rm -rf {CAMERA_HOME}; "
         f"ls {UNIT_PATH} {WANTS_PATH} {CAMERA_HOME} 2>&1; grep ' / ' /proc/mounts", check=False).rstrip())
     print("removed: the camera no longer looks at the card at startup")

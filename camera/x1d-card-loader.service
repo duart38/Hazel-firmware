@@ -1,8 +1,12 @@
 [Unit]
-Description=X1D Card Loader: run the setup on the memory card (X1DLOAD.TAR)
+Description=Catkin: run the setup on the memory card (CATKIN.TAR)
 # delete /media/data/x1d-card-loader/boot.sh and this does nothing
 ConditionPathExists=/media/data/x1d-card-loader/boot.sh
 RequiresMountsFor=/media/data
+# Started with live view (late.target, 7 s after power-on) rather than verylate.target (10 s), so
+# the interface restart that load.sh does comes sooner. After the services a setup restarts, so it
+# never restarts one that is still starting.
+After=storage-daemon.service victory-gui.service video-daemon.service
 
 [Service]
 # "simple" so the camera's own startup never waits on it; RemainAfterExit keeps what load.sh
@@ -12,4 +16,4 @@ RemainAfterExit=yes
 ExecStart=/bin/sh /media/data/x1d-card-loader/boot.sh
 
 [Install]
-WantedBy=verylate.target
+WantedBy=late.target
