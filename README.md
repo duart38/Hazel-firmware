@@ -98,6 +98,12 @@ bar. Tap it to see that photo with another recipe, or with the film look off. On
 `.look` file next to it on the card changes; the raw file stays exactly as it was shot, and you can
 pick the first recipe again at any time.
 
+To change a recipe on the camera, tap the sliders button next to its name in live view. Pick a
+setting from the list, then turn either wheel while you watch the picture change; hold the
+picture to see the saved recipe for comparison. When you're done, save it to its slot, save it as
+a new slot (with a keyboard for its name), use it without saving, or discard the changes. Saved
+recipes go to the card's `HAZEL/recipes` too.
+
 To use other recipes, put text files named `C1.txt` to `C7.txt` in a `HAZEL/recipes` folder on
 the card (at most 2 KB each). The camera reads them when it starts and when you open the menu.
 There are recipes to start from in

@@ -9,6 +9,8 @@
 #                            the next start; re-read the card's slots when the menu opens (the card
 #                            is readable then, live view is off), so slots written by the app show
 #                            up, and with debug logging on copy the logs to the card as HAZEL-DEBUG.LOG.
+#                            A recipe adjusted on the camera and used without saving (/tmp/x1d/edited,
+#                            written by adjust/adjust.sh) stays live until another slot is picked.
 # Reading the card needs live view off; while it's on, only the refresh waits.
 S="--system com.hasselblad.storage / com.hasselblad.storage"
 DIR=/tmp/x1d
@@ -94,11 +96,12 @@ watch() {
       refresh ""
       refreshed=$now
       # the app may have changed the recipe in the chosen slot
-      [ -f "$DIR/slots/$active.txt" ] && ! cmp -s "$DIR/slots/$active.txt" $DIR/recipe && use "$active" && say "slot $active changed on the card"
+      [ ! -f $DIR/edited ] && [ -f "$DIR/slots/$active.txt" ] && ! cmp -s "$DIR/slots/$active.txt" $DIR/recipe && use "$active" && say "slot $active changed on the card"
       [ "$(cat $DIR/debug 2>/dev/null)" = on ] && card_log
     fi
     was=$browsing
     if [ "$active" != "$last_active" ]; then
+      rm -f $DIR/edited
       [ -f "$DIR/slots/$active.txt" ] && use "$active"
       echo "$active" >$KEEP/active
       last_active=$active
