@@ -4,9 +4,9 @@ Film looks in the live view of a Hasselblad X1D-50c (the first model, firmware 1
 you see in the viewfinder is the look the photo gets, and each photo gets a small `.look` file
 next to it saying which recipe it was taken with. The raw files themselves are never changed.
 
-Everything goes over the camera's USB connection to a Mac. Nothing is opened, nothing is
-flashed, and no firmware is replaced. Take the memory card out and the camera starts as it
-always did.
+Everything goes over the camera's USB cable, from [the Hazel app](https://hazel-one-weld.vercel.app) in Chrome or
+Edge, or from a Terminal on a Mac. Nothing is opened, nothing is flashed, and no firmware is
+replaced. Take the memory card out and the camera starts as it always did.
 
 > Not made by, endorsed by or affiliated with Hasselblad. You run this on your own camera at your
 > own risk. It was built and tested on one camera.
@@ -19,6 +19,7 @@ always did.
   memory card every time the camera starts.
 - `hazel/`: **the film look**, ready-built: the setup Catkin loads from the card, with seven
   recipes in its slots.
+- `release/hazel.tar`: the same setup in one file, which the Hazel app installs.
 - `docs/`: the pictures in this README.
 
 The recipes themselves, and more of them, are in
@@ -35,7 +36,26 @@ The recipes themselves, and more of them, are in
 
 The service is the only change to the camera's own software, and a firmware update removes it.
 
-## You need
+## Install from the browser
+
+The easy way, on a Mac, Windows or Linux computer with Chrome or Edge:
+
+1. Put a memory card in the camera, switch it on, and connect it to the computer with its USB-C
+   cable.
+2. Open [the Hazel app](https://hazel-one-weld.vercel.app), go to **Camera**, press **Connect** and choose X1D-50c.
+3. Press **Install Hazel**. The first time, it asks before the one lasting change, the start-up
+   service in the table above.
+4. Restart the camera. Within about half a minute of switching on, the look is on.
+
+It takes about half a minute and gives the camera its key. The same page shows which Hazel the
+camera runs, updates it when a newer one is here, and removes it again. It was tested on a Mac;
+Windows may need a USB driver for the camera before Chrome can see it.
+
+## Install from the Terminal
+
+The same steps by hand, if you'd rather.
+
+### You need
 
 A Mac, the camera with firmware 1.25.0, its USB-C cable, Python 3 and libusb:
 
@@ -47,7 +67,7 @@ brew install libusb
 python3 -m venv .venv && .venv/bin/pip install pyusb
 ```
 
-## 1. Put the loader on the camera
+### 1. Put the loader on the camera
 
 Switch the camera on, connect it to the Mac, then:
 
@@ -63,7 +83,7 @@ computer works, and a card sealed in a card reader uses the key of the camera la
 
 `.venv/bin/python catkin status` shows what's installed at any time.
 
-## 2. Prepare the memory card
+### 2. Prepare the memory card
 
 Seal the film look with your key:
 
@@ -123,7 +143,8 @@ Formatting the card in the camera removes the setup, like everything else on the
 ## Undo
 
 - **Back to stock for one start:** take the card out, or delete `CATKIN.TAR` from it.
-- **Remove the loader:** `.venv/bin/python catkin remove` deletes the service and
+- **Remove the loader:** **Remove Hazel** on the Camera page of [the Hazel app](https://hazel-one-weld.vercel.app), or
+  `.venv/bin/python catkin remove`. Either deletes the service and
   `/media/data/x1d-card-loader`. The few bytes of settings in `/media/data/x1d` stay; without the
   loader nothing reads them.
 - A firmware update also removes the service.
