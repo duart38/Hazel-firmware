@@ -205,6 +205,21 @@ def key() -> str:
     return KEY_FILE.read_text().strip()
 
 
+def camera_key(cam: Camera) -> str:
+    """The camera's key wins over this Mac's: the web app, or another computer, may have set it. A
+    camera with a key hands it over and this Mac keeps a copy, so `card --to` seals for it too.
+    Empty when the camera has none yet."""
+    k = cam.sh(f"cat {CAMERA_HOME}/key 2>/dev/null", check=False).strip()
+    if len(k) < 32:
+        return ""
+    if not KEY_FILE.exists() or KEY_FILE.read_text().strip() != k:
+        KEY_FILE.parent.mkdir(parents=True, exist_ok=True)
+        KEY_FILE.write_text(k + "\n")
+        KEY_FILE.chmod(0o600)
+        print(f"took the camera's key into {KEY_FILE}")
+    return k
+
+
 def seal(archive: bytes) -> str:
     """What camera/boot.sh computes: SHA-256 of key, archive SHA-256, key, a line each."""
     k = key()
@@ -247,13 +262,14 @@ def status(cam: Camera) -> None:
         check=False).rstrip())
     if KEY_FILE.exists():
         matches = cam.sh(f"cat {CAMERA_HOME}/key 2>/dev/null", check=False).strip() == key()
-        print(f"key on this Mac:        {KEY_FILE} ({'the same' if matches else 'DIFFERENT from the camera'})")
+        print(f"key on this Mac:        {KEY_FILE} ({'the same' if matches else 'different: card --usb and install take the camera’s'})")
     else:
         print(f"key on this Mac:        none yet ({KEY_FILE})")
 
 
 def install_data(cam: Camera) -> None:
-    cam.push((key() + "\n").encode(), f"{CAMERA_HOME}/key", mode="600")
+    if not camera_key(cam):
+        cam.push((key() + "\n").encode(), f"{CAMERA_HOME}/key", mode="600")
     cam.push((HERE / "camera/boot.sh").read_bytes(), f"{CAMERA_HOME}/boot.sh", mode="755")
     print(f"key and loader script are in {CAMERA_HOME} (the camera's data partition)")
 
@@ -301,6 +317,10 @@ def card_usb(cam: Camera, card: str | None) -> None:
     archive, signature = BUILD / TAR, BUILD / SIG
     if not archive.exists():
         raise SystemExit("nothing packed yet: run  catkin pack FOLDER  first")
+    if not camera_key(cam):
+        raise SystemExit("the camera has no key, so it would ignore the card: run  catkin install  first")
+    # sealed again in case the key just came from the camera
+    signature.write_text(seal(archive.read_bytes()) + "\n")
     lines = []
     for path in (archive, signature):
         cam.push(path.read_bytes(), f"/tmp/{path.name}")

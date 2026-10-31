@@ -56,9 +56,10 @@ Switch the camera on, connect it to the Mac, then:
 ```
 
 It shows exactly what it will change and asks you to type `install` before doing it. It also
-makes a key on your Mac (`~/.config/catkin/key`) and puts a copy on the camera. The camera only
-runs a card setup sealed with that key, so a stranger's card can't run anything on it. Keep the
-key private and back it up.
+gives the camera a key. The camera only runs a card setup sealed with its own key, so a stranger's
+card can't run anything on it. The key stays on the camera: whenever the camera is connected,
+Catkin seals with the camera's key and keeps a copy on your Mac (`~/.config/catkin/key`), so any
+computer works, and a card sealed in a card reader uses the key of the camera last connected.
 
 `.venv/bin/python catkin status` shows what's installed at any time.
 
