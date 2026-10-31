@@ -111,7 +111,7 @@ setup right away and prints what happened.
 
 ## Using it
 
-On the camera: **Settings › Extras**. Switch the film look on or off, and pick one of the seven
+On the camera: **Menu › General Settings › Hazel**. Switch the film look on or off, and pick one of the seven
 recipe slots.
 
 The recipe's name shows in live view and on the info screen; tap it to pick another slot there.
