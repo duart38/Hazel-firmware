@@ -19,6 +19,7 @@ always did.
   memory card every time the camera starts.
 - `hazel/`: **the film look**, ready-built: the setup Catkin loads from the card, with seven
   recipes in its slots.
+- `docs/`: the pictures in this README.
 
 The recipes themselves, and more of them, are in
 [Hazel-film-recipes](https://github.com/duart38/Hazel-film-recipes).
@@ -103,6 +104,12 @@ setting from the list, then turn either wheel while you watch the picture change
 picture to see the saved recipe for comparison. When you're done, save it to its slot, save it as
 a new slot (with a keyboard for its name), use it without saving, or discard the changes. Saved
 recipes go to the card's `HAZEL/recipes` too.
+
+| Pick a setting | Turn the wheels, watch the picture | Name a new recipe |
+| --- | --- | --- |
+| ![The settings of the Gold 200 recipe, on the Colour tab, next to the live picture](docs/adjust-settings.png) | ![Shadow tint over live view: the front wheel moves the hue, the rear wheel the amount, and the shadows turn teal](docs/adjust-shadow-tint.png) | ![The keyboard for the name of a recipe saved as new, with "Autumn teal" typed](docs/adjust-name.png) |
+
+These are the camera's own screens, with the film look applied to the live view.
 
 To use other recipes, put text files named `C1.txt` to `C7.txt` in a `HAZEL/recipes` folder on
 the card (at most 2 KB each). The camera reads them when it starts and when you open the menu.
