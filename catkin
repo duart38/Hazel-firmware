@@ -218,6 +218,9 @@ def pack(folder: Path) -> tuple[Path, Path]:
     archive, signature = BUILD / TAR, BUILD / SIG
     with tarfile.open(archive, "w", format=tarfile.USTAR_FORMAT) as tar:
         for path in sorted(folder.rglob("*")):
+            # the Mac's .DS_Store and other hidden files aren't part of the setup
+            if any(part.startswith(".") for part in path.relative_to(folder).parts):
+                continue
             name = path.relative_to(folder).as_posix()
             info = tar.gettarinfo(str(path), arcname=name)
             info.uid = info.gid = 0
